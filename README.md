@@ -24,10 +24,12 @@ Aplikasi segmentasi citra digital berbasis Streamlit dengan pemisahan:
   - Mask (PNG)
 
 ## Anggota Kelompok
-- Nama 1 (NIM)
-- Nama 2 (NIM)
-- Nama 3 (NIM)
-- ...
+- Wisnu Dwi Haryanto (A11.2023.15266)
+- Disna Refarlan Widistomo (A11.2023.15265)
+- Ali Murtadho (A11.2023.15269)
+- Erlangga Rayhan Hernawan (A11.2022.14419)
+- Adiestya Rully Hermawan (A11.2022.14386)
+- Unggul Sakti Ardiansyah (A11.2022.14335)
 
 ## Cara Menjalankan (Windows + VS Code)
 1. Buka folder project:

@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import numpy as np
 import cv2
-import io  # ✅ FIX: needed for BytesIO (seekable)
+import io
 
 
 # -----------------------------
@@ -42,6 +42,44 @@ def overlay_mask(img_bgr: np.ndarray, mask01: np.ndarray, alpha: float = 0.5) ->
 
 def ensure_gray(img_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+
+# -----------------------------
+# Metrics (requires GT mask)
+# -----------------------------
+def _as_binary01(x: np.ndarray) -> np.ndarray:
+    return (x > 0).astype(np.uint8)
+
+
+def gt_mask_from_bytes(mask_bytes: bytes, target_hw: tuple[int, int]) -> np.ndarray:
+    """
+    Decode GT mask image bytes and resize to match predicted mask size.
+    Returns binary mask01 (H,W) uint8 in {0,1}.
+    """
+    arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+    m = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if m is None:
+        raise ValueError("Gagal membaca GT mask. Pastikan file mask valid (png/jpg).")
+    h, w = target_hw
+    if m.shape[:2] != (h, w):
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_NEAREST)
+    return _as_binary01(m)
+
+
+def iou_score(pred01: np.ndarray, gt01: np.ndarray) -> float:
+    p = _as_binary01(pred01)
+    g = _as_binary01(gt01)
+    inter = int(np.sum(p & g))
+    union = int(np.sum((p | g) > 0))
+    return float(inter / (union + 1e-8))
+
+
+def dice_score(pred01: np.ndarray, gt01: np.ndarray) -> float:
+    p = _as_binary01(pred01)
+    g = _as_binary01(gt01)
+    inter = int(np.sum(p & g))
+    denom = int(np.sum(p) + np.sum(g))
+    return float((2.0 * inter) / (denom + 1e-8))
 
 
 # -----------------------------
@@ -194,9 +232,6 @@ def _lazy_import_smp():
 
 
 def _smp_preprocess_rgb_float(img_rgb: np.ndarray, encoder_name: str):
-    """
-    Returns torch tensor (1,3,H,W) float32 normalized with encoder preprocessing.
-    """
     import torch
     import segmentation_models_pytorch as smp
 
@@ -212,18 +247,11 @@ def _smp_preprocess_rgb_float(img_rgb: np.ndarray, encoder_name: str):
 
 
 def _extract_state_dict(obj: object) -> Dict[str, Any]:
-    """
-    Handles common checkpoint formats:
-    - state_dict directly
-    - {'state_dict': state_dict}
-    - {'model_state_dict': state_dict}
-    """
     if isinstance(obj, dict):
         if "state_dict" in obj and isinstance(obj["state_dict"], dict):
             return obj["state_dict"]
         if "model_state_dict" in obj and isinstance(obj["model_state_dict"], dict):
             return obj["model_state_dict"]
-        # assume dict is itself a state_dict
         return obj
     raise RuntimeError("Format weights tidak dikenali. Pastikan file berisi state_dict PyTorch.")
 
@@ -236,16 +264,9 @@ def seg_smp_binary(
     device: str = "cpu",
     conf_thresh: float = 0.5,
 ) -> np.ndarray:
-    """
-    Binary segmentation using SMP model.
-    IMPORTANT: for meaningful results, provide trained weights (.pth/.pt).
-    Output: mask01 (H,W) uint8.
-    """
     ok = _lazy_import_smp()
     if not ok:
-        raise RuntimeError(
-            "Dependency untuk UNet/FPN belum lengkap. Install: pip install segmentation-models-pytorch timm"
-        )
+        raise RuntimeError("Dependency untuk UNet/FPN belum lengkap. Install: pip install segmentation-models-pytorch timm")
     if not weights_bytes:
         raise RuntimeError("UNet/FPN memerlukan file weights (.pth/.pt). Silakan upload di UI.")
 
@@ -272,14 +293,13 @@ def seg_smp_binary(
     else:
         raise ValueError("arch tidak dikenali. Pilih: unet / fpn")
 
-    # ✅ FIX: torch.load needs a seekable file-like object (BytesIO)
+    # ✅ FIX: load from seekable buffer
     buf = io.BytesIO(weights_bytes)
     buf.seek(0)
     state = torch.load(buf, map_location="cpu")
 
     state_dict = _extract_state_dict(state)
 
-    # Strip possible 'module.' prefix (DataParallel)
     cleaned: Dict[str, Any] = {}
     for k, v in state_dict.items():
         nk = k.replace("module.", "") if isinstance(k, str) else k
@@ -356,11 +376,7 @@ def run_segmentation(
         return {
             "mask01": dl.mask01,
             "overlay": overlay,
-            "meta": {
-                "algo": algo_norm,
-                "target_class": int(params.get("target_class", 15)),
-                "num_classes": dl.num_classes
-            },
+            "meta": {"algo": algo_norm, "target_class": int(params.get("target_class", 15)), "num_classes": dl.num_classes},
         }
 
     if algo_norm in ["unet", "fpn"]:
